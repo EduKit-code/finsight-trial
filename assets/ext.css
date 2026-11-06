@@ -1,0 +1,4 @@
+/* FinSight Trial — tambahan gaya pasca-onboarding + pengaman lebar layar (mencegah luapan horizontal di ponsel). */
+html,body{max-width:100%;overflow-x:hidden}.wrap,.card,main{min-width:0}input[type=date]{min-width:0;max-width:100%}
+.list li{flex-wrap:wrap}.acts{display:flex;gap:6px;flex-wrap:wrap;width:100%;margin-top:4px}.acts button{min-height:40px;padding:6px 12px}
+.tiles button{width:100%}.hist li{align-items:flex-start}.hist .amt{font-weight:700;white-space:nowrap}.hist .pos{color:var(--accent)}

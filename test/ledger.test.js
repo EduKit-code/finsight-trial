@@ -1,0 +1,43 @@
+/* Regression test ledger.js: engine_subset + domain_subset + ledger.js dalam satu konteks vm. */
+const vm = require('vm'), fs = require('fs'), path = require('path');
+const ctx = vm.createContext({ console, Object, JSON, Date, Number, Error, Set, Array, String, Math }); ctx.globalThis = ctx;
+['engine_subset.js', 'domain_subset.js', '../assets/ledger.js'].forEach(f => vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), ctx, { filename: f }));
+const D = ctx.FSDomain, Lg = ctx.FSLedger;
+let pass = 0, fail = 0; const t = (n, f) => { try { f(); pass++; console.log('PASS', n); } catch (e) { fail++; console.log('FAIL', n, '→', e.message); } };
+const eq = (a, b, m) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error((m || '') + ' got ' + JSON.stringify(a) + ' want ' + JSON.stringify(b)); };
+const throws = (fn, code) => { try { fn(); } catch (e) { if (String(e.message).split(':')[0] !== code) throw new Error('want ' + code + ' got ' + e.message); return; } throw new Error('tidak melempar ' + code); };
+const NOW = new Date(2026, 10, 6, 12), OPEN = { CASH: 350000, REKENING: 2500000, E_WALLET: 135000, snapshotDate: '2026-11-05' };
+const cats = { income: [{ key: 'Gaji', nama: 'Gaji', tipe: 'fixed', aktif: true }], expense: [{ key: 'Transportasi', nama: 'Transportasi', klasifikasi: 'Kebutuhan', aktif: true }] };
+let ledger = [], seq = 0, rid = 0;
+function add(kind, form, o) { const ev = Lg.build(OPEN, ledger, { kind, form, cats, requestId: 'req_' + (++rid) + '_abcdefgh' }, NOW); ledger.push(Object.assign({ seq: ++seq, createdAt: '2026-11-06T05:00:00Z' }, ev)); return ev; }
+const st = () => Lg.replay(OPEN, ledger);
+// setup: aset + utang seperti smoke test Owner
+const A0 = add('OPEN_ASSET', { name: 'tabungan bulanan', value: '3500000', contribution: '500000', transactionDate: '2026-11-05' });
+const B0 = add('OPEN_DEBT', { name: 'pinjem koperasi', principal: '4500000', remaining: '3500000', mode: 'CICILAN', installment: '500000', transactionDate: '2026-11-05' });
+const aid = A0.data.assetId, did = B0.data.debtId;
+t('replay mengenali event baru dan saldo awal utuh', () => { eq(D.totalBalance(st()), 2985000); });
+t('pemasukan berulang dengan alokasi sebagian', () => { add('INCOME', { amount: '1000000', source: 'Gaji', transactionDate: '2026-11-06', allocations: { REKENING: '700000', CASH: '100000' } }); const s = st(); eq(s.locations.REKENING, 3200000); eq(s.unallocatedIncome, 200000); });
+t('pengeluaran memakai saldo SAAT INI (bukan saldo awal)', () => { add('EXPENSE', { amount: '450000', locationId: 'CASH', category: 'Transportasi', transactionDate: '2026-11-06' }); eq(st().locations.CASH, 0); });
+t('pengeluaran melebihi saldo lokasi ditolak', () => throws(() => add('EXPENSE', { amount: '1', locationId: 'CASH', category: 'Transportasi', transactionDate: '2026-11-06' }), 'INSUFFICIENT_LOCATION_BALANCE'));
+t('tempatkan sisa pemasukan: pindah dari belum-dialokasikan, BUKAN pemasukan baru', () => { add('ALLOCATE_INCOME', { locationId: 'E_WALLET', amount: '150000', transactionDate: '2026-11-06' }); const s = st(); eq(s.unallocatedIncome, 50000); eq(s.income, 1000000); eq(Lg.build ? Lg.netWorth(s).liquid : 0, D.totalBalance(s)); });
+t('alokasi melebihi sisa ditolak', () => throws(() => add('ALLOCATE_INCOME', { locationId: 'CASH', amount: '60000', transactionDate: '2026-11-06' }), 'UNALLOCATED_INCOME_INSUFFICIENT'));
+t('bayar utang: kurangi lokasi & sisa utang, tidak masuk pengeluaran', () => { const before = st(); add('DEBT_PAYMENT', { debtId: did, locationId: 'REKENING', amount: '500000', transactionDate: '2026-11-06' }); const s = st(); eq(s.locations.REKENING, before.locations.REKENING - 500000); eq(s.debts[did].remaining, 3000000); eq(s.expense, before.expense); });
+t('bayar utang melebihi sisa ditolak', () => throws(() => add('DEBT_PAYMENT', { debtId: did, locationId: 'REKENING', amount: '3000001', transactionDate: '2026-11-06' }), 'PAYMENT_EXCEEDS_DEBT_REMAINING'));
+t('bayar utang melebihi saldo lokasi ditolak', () => throws(() => add('DEBT_PAYMENT', { debtId: did, locationId: 'CASH', amount: '1', transactionDate: '2026-11-06' }), 'INSUFFICIENT_LOCATION_BALANCE'));
+t('utang tidak dikenal ditolak', () => throws(() => add('DEBT_PAYMENT', { debtId: 'xx', locationId: 'CASH', amount: '1', transactionDate: '2026-11-06' }), 'DEBT_INVALID'));
+t('Bulan Ini: bayar utang terpisah; Savings Rate tidak terpengaruh', () => { const m = D.monthSummary(ledger, NOW); eq(m.income, 1000000); eq(m.expense, 450000); eq(m.debtPayments, 500000); });
+t('revalue aset tidak mengubah saldo lokasi', () => { const b = D.totalBalance(st()); add('REVALUE_ASSET', { assetId: aid, value: '4000000', transactionDate: '2026-11-06' }); eq(D.totalBalance(st()), b); eq(st().assets[aid].value, 4000000); });
+t('DCA: kurangi lokasi, tambah nilai+setoran aset, bukan pengeluaran', () => { const b = st(); add('DCA', { assetId: aid, from: 'REKENING', amount: '200000', transactionDate: '2026-11-06' }); const s = st(); eq(s.locations.REKENING, b.locations.REKENING - 200000); eq(s.assets[aid].value, 4200000); eq(s.assets[aid].contribution, 700000); eq(s.expense, b.expense); });
+t('WD: tarik aset ke lokasi, bukan pemasukan', () => { const b = st(); add('WD', { assetId: aid, to: 'CASH', amount: '100000', transactionDate: '2026-11-06' }); const s = st(); eq(s.locations.CASH, b.locations.CASH + 100000); eq(s.income, b.income); });
+t('WD melebihi nilai aset ditolak', () => throws(() => add('WD', { assetId: aid, to: 'CASH', amount: '99999999', transactionDate: '2026-11-06' }), 'ASSET_BALANCE_INSUFFICIENT'));
+t('transfer internal: total tetap, income/expense tetap', () => { const b = st(); add('TRANSFER', { from: 'REKENING', to: 'CASH', amount: '50000', transactionDate: '2026-11-06' }); const s = st(); eq(D.totalBalance(s), D.totalBalance(b)); eq([s.income, s.expense], [b.income, b.expense]); });
+t('transfer ke lokasi yang sama ditolak', () => throws(() => add('TRANSFER', { from: 'CASH', to: 'CASH', amount: '1', transactionDate: '2026-11-06' }), 'TRANSFER_SAME_LOCATION'));
+t('tanggal masa depan & sebelum saldo awal ditolak', () => { throws(() => add('REVALUE_ASSET', { assetId: aid, value: '1', transactionDate: '2026-11-07' }), 'TRANSACTION_IN_FUTURE'); throws(() => add('REVALUE_ASSET', { assetId: aid, value: '1', transactionDate: '2026-11-04' }), 'TRANSACTION_BEFORE_SNAPSHOT'); });
+t('pelunasan: sisa 0 → LUNAS, lalu bayar lagi ditolak', () => { add('INCOME', { amount: '5000000', source: 'Gaji', transactionDate: '2026-11-06', allocations: { REKENING: '5000000' } }); const rem = st().debts[did].remaining; add('DEBT_PAYMENT', { debtId: did, locationId: 'REKENING', amount: String(rem), transactionDate: '2026-11-06' }); eq(st().debts[did].status, 'LUNAS'); throws(() => add('DEBT_PAYMENT', { debtId: did, locationId: 'REKENING', amount: '1', transactionDate: '2026-11-06' }), 'DEBT_ALREADY_PAID'); });
+t('saldo lokasi direkonstruksi dari saldo awal + ledger (replay dua kali sama)', () => { eq(JSON.stringify(st().locations), JSON.stringify(st().locations)); });
+t('replay mendeteksi ledger yang diubah (mismatch)', () => { const bad = JSON.parse(JSON.stringify(ledger)); bad.find(e => e.type === 'EXPENSE').result.amount = 1; throws(() => Lg.replay(OPEN, bad), 'LEDGER_REPLAY_MISMATCH'); });
+t('retry request id sama + payload sama tidak menggandakan efek (idempoten)', () => { const e = ledger[2]; const again = JSON.parse(JSON.stringify(ledger)).concat([Object.assign({}, e, { seq: 999 })]); eq(Lg.replay(OPEN, again).locations, st().locations); eq(Lg.replay(OPEN, again).income, st().income); });
+t('request id sama + payload beda ditolak', () => { const e = JSON.parse(JSON.stringify(ledger[2])); e.seq = 999; e.data.amount = 1; e.result = { x: 1 }; throws(() => Lg.replay(OPEN, ledger.concat([e])), 'REQUEST_ID_REUSED_WITH_DIFFERENT_PAYLOAD'); });
+t('describe & cashflow & netWorth', () => { const s = st(); const dsc = ledger.map(e => Lg.describe(e, s)); if (dsc.some(x => !x.title)) throw new Error('judul kosong'); const cf = Lg.cashflow(ledger, NOW, 3); eq(cf.length, 3); eq(cf[0].label, 'Nov 2026'); eq(cf[0].net, cf[0].income - cf[0].expense); const nw = Lg.netWorth(s); eq(nw.net, nw.liquid + nw.assets - nw.debts); });
+t('catatan >300 karakter ditolak', () => throws(() => add('REVALUE_ASSET', { assetId: aid, value: '1', note: 'x'.repeat(301), transactionDate: '2026-11-06' }), 'NOTE_TOO_LONG'));
+console.log('\nHASIL:', pass, 'lulus,', fail, 'gagal'); process.exit(fail ? 1 : 0);
