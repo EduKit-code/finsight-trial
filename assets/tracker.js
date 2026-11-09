@@ -212,9 +212,15 @@
     if (T.injecting) return; T.injecting = true;
     readCtx().then(function (c) {
       var main = document.getElementById('dashboard'); if (!main || document.getElementById('tracker-top')) return;
-      T.ctx = c; T.v++; var saldo = main.querySelector('section[aria-labelledby="h-saldo"]'), settings = document.getElementById('settings'), top = renderTop(c);
+      T.ctx = c; T.v++; var saldo = main.querySelector('section[aria-labelledby="h-saldo"]'), top = renderTop(c);
       if (saldo && saldo.nextSibling) main.insertBefore(top, saldo.nextSibling); else main.appendChild(top);
-      main.insertBefore(el('div', { id: 'tracker-bottom' }), settings || null); renderBottom();
+      // Dashboard menyediakan wadah Detail agar cashflow, riwayat, dan kelola tidak memenuhi layar utama.
+      if (!document.getElementById('tracker-bottom')) {
+        var detail = document.getElementById('detail-wrap');
+        var bottom = el('div', { id: 'tracker-bottom' });
+        if (detail) detail.appendChild(bottom); else main.appendChild(bottom);
+      }
+      renderBottom();
       Array.prototype.forEach.call(main.querySelectorAll('.tile small'), function (n) { if (n.textContent === 'Bayar hutang') n.textContent = 'Bayar utang'; });
     }).catch(function () { }).then(function () { T.injecting = false; });
   }
