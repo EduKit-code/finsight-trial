@@ -421,29 +421,87 @@
   function renderDashboard() {
     if (!A.dash) return loadDashboard();
     var d = A.dash, st = d.st, now = new Date(), month = D.monthSummary(d.ledger, now), sr = D.savingsRate(month, d.open.snapshotDate, now), total = D.totalBalance(st);
-    var firstTx = d.ledger.filter(function (e) { return e.type === 'INCOME' || e.type === 'EXPENSE'; })[0], openTotal = D.LOCS.reduce(function (a, k) { return a + d.open[k]; }, 0);
-    var impact = null;
-    if (firstTx && d.meta.impactSeen === false) {
-      var txt = firstTx.type === 'EXPENSE' ? 'Saldo ' + D.LOC_LABEL[firstTx.data.locationId] + ' turun dari ' + money(d.open[firstTx.data.locationId]) + ' menjadi ' + money(st.locations[firstTx.data.locationId]) + '. Bulan Ini: pengeluaran ' + money(month.expense) + '.'
-        : 'Pemasukan ' + money(firstTx.data.amount) + ' tercatat. Saldo Berjalan berubah dari ' + money(openTotal) + ' menjadi ' + money(total) + (st.unallocatedIncome > 0 ? ' (' + money(st.unallocatedIncome) + ' belum dialokasikan, belum masuk Saldo Berjalan)' : '') + '.';
-      impact = el('div', { class: 'okbox', id: 'impact-card', role: 'status' }, el('strong', { text: 'Transaksi pertamamu tersimpan. ' }), txt, el('div', {}, el('button', { type: 'button', id: 'impact-dismiss', text: 'Tutup', onclick: function () { S.updateMeta({ impactSeen: true }).then(loadDashboard); } })));
-    }
-    var empty = month.income === 0 && month.expense === 0;
-    var assets = Object.keys(st.assets).map(function (k) { return st.assets[k]; }), debts = Object.keys(st.debts).map(function (k) { return st.debts[k]; });
+    var assets = Object.keys(st.assets).map(function (k) { return st.assets[k]; });
+    var debts = Object.keys(st.debts).map(function (k) { return st.debts[k]; });
+    var net = total + assets.reduce(function (n, a) { return n + (Number(a.value) || 0); }, 0) - debts.reduce(function (n, x) { return n + (Number(x.remaining) || 0); }, 0);
     var persistTxt = { 'diberikan': 'Browser memberi perlindungan tambahan untuk data ini, tetapi data tetap bisa hilang bila kamu membersihkannya.', 'tidak-diberikan': 'Browser tidak memberi perlindungan tambahan. Data lebih mudah hilang bila ruang penyimpanan menipis atau data browser dibersihkan.', 'tidak-tersedia': 'Perlindungan tambahan tidak tersedia di browser ini.', 'belum-diminta': 'Belum ada perlindungan tambahan.' }[d.meta.persist || 'belum-diminta'];
-    var main = el('main', { class: 'wrap', id: 'dashboard' }, el('h1', { id: 'dash-title', text: 'FinSight Trial' }), d.rebuilt ? el('p', { class: 'warn', id: 'rebuilt-note', text: 'Data turunan (aset/utang) dibangun ulang dari catatan transaksi.' }) : null, impact,
-      el('section', { class: 'card', 'aria-labelledby': 'h-saldo' }, el('h2', { id: 'h-saldo', text: 'Saldo Berjalan' }), el('div', { class: 'big', id: 'saldo-total', text: money(total) }),
-        el('ul', { class: 'list', id: 'saldo-lokasi' }, D.LOCS.map(function (k) { return el('li', {}, el('span', { text: D.LOC_LABEL[k] }), el('strong', { id: 'saldo-' + k, text: money(st.locations[k]) })); })),
-        st.unallocatedIncome > 0 ? el('p', { class: 'warn', id: 'unallocated', text: 'Belum dialokasikan: ' + money(st.unallocatedIncome) + ' (belum termasuk Saldo Berjalan).' }) : null,
-        el('p', { class: 'hint', text: 'Dihitung dari saldo awal per ' + d.open.snapshotDate + ' dan transaksi yang kamu catat.' })),
-      el('section', { class: 'card', 'aria-labelledby': 'h-bulan' }, el('h2', { id: 'h-bulan', text: 'Bulan Ini' }),
-        el('div', { class: 'tiles' }, tile('Pemasukan', money(month.income), 'bln-income'), tile('Pengeluaran', money(month.expense), 'bln-expense'), tile('Bayar hutang', money(month.debtPayments), 'bln-debt'), tile('Savings Rate', sr.text, 'bln-savings', sr.note)),
-        empty ? el('p', { class: 'muted', id: 'bln-empty', text: 'Belum ada transaksi bulan ini.' }) : null,
-        el('p', { class: 'hint', text: 'Bayar utang tidak dihitung pengeluaran, jadi tidak menurunkan Savings Rate.' })),
-      el('section', { class: 'card', 'aria-labelledby': 'h-catatan' }, el('h2', { id: 'h-catatan', text: 'Catatan untukmu' }), el('ul', { id: 'catatan' }, D.notes(st, month, d.ledger, now).map(function (n) { return el('li', { text: n }); })), el('p', { class: 'hint', text: 'Catatan dari datamu sendiri, bukan prediksi.' })),
-      assets.length || debts.length ? el('section', { class: 'card', id: 'ad-card' }, el('h2', { text: 'Aset dan utang yang kamu catat' }), el('ul', { class: 'list' }, assets.map(function (a) { return el('li', {}, el('span', { text: 'Aset: ' + a.name + ' (setoran ' + money(a.contribution) + ')' }), el('strong', { text: money(a.value) })); }),
-        debts.map(function (x) { return el('li', {}, el('span', { text: 'Utang: ' + x.name + ' · ' + (x.mode === 'CICILAN' ? 'cicilan' : 'tunai') + ' · ' + x.status }), el('strong', { text: 'sisa ' + money(x.remaining) })); }))) : null,
+
+    var pos = el('section', { class: 'card', 'aria-labelledby': 'h-saldo' },
+      el('h2', { id: 'h-saldo', text: 'Posisi' }),
+      el('div', { class: 'big', id: 'saldo-total', text: money(total) }),
+      el('ul', { class: 'list', id: 'saldo-lokasi' }, D.LOCS.map(function (k) {
+        return el('li', {}, el('span', { text: D.LOC_LABEL[k] }), el('strong', { id: 'saldo-' + k, text: money(st.locations[k]) }));
+      })),
+      st.unallocatedIncome > 0 ? el('p', { class: 'warn', id: 'unallocated', text: 'Pemasukan belum ditempatkan: ' + money(st.unallocatedIncome) + '. Angka ini belum termasuk Saldo Berjalan.' }) : null,
+      el('div', { class: 'tiles' },
+        tile('Nilai aset tercatat', money(assets.reduce(function (n, a) { return n + (Number(a.value) || 0); }, 0)), 'pos-assets'),
+        tile('Sisa utang tercatat', money(debts.reduce(function (n, x) { return n + (Number(x.remaining) || 0); }, 0)), 'pos-debts')),
+      tile('Kekayaan bersih tercatat', money(net), 'pos-net'),
+      el('p', { class: 'hint', text: 'Saldo dihitung dari saldo awal per ' + d.open.snapshotDate + ' dan transaksi. Kekayaan bersih = saldo + aset − sisa utang.' }));
+
+    var bulan = el('section', { class: 'card', 'aria-labelledby': 'h-bulan' },
+      el('h2', { id: 'h-bulan', text: 'Bulan Ini' }),
+      el('div', { class: 'tiles' },
+        tile('Pemasukan', money(month.income), 'bln-income'),
+        tile('Pengeluaran konsumsi', money(month.expense), 'bln-expense'),
+        tile('Pembayaran utang', money(month.debtPayments), 'bln-debt'),
+        tile('Savings Rate', sr.text, 'bln-savings', sr.note)),
+      el('p', { class: 'hint', text: 'Savings Rate membandingkan pemasukan dan pengeluaran konsumsi yang tercatat. Pembayaran utang dan transfer internal tidak dihitung sebagai pengeluaran.' }));
+
+    var insights = [];
+    if (st.unallocatedIncome > 0) insights.push({
+      title: 'Ada pemasukan yang belum ditempatkan',
+      meaning: money(st.unallocatedIncome) + ' sudah tercatat sebagai pemasukan, tetapi belum masuk ke saldo Cash, Rekening, atau E-Wallet.',
+      impact: 'Jumlah ini belum menambah Saldo Berjalan.',
+      basis: 'Sisa pemasukan belum ditempatkan: ' + money(st.unallocatedIncome) + '.'
+    });
+    if (sr.value === null) insights.push({
+      title: 'Savings Rate belum dapat dihitung',
+      meaning: 'Belum ada pemasukan bulan ini yang tercatat.',
+      impact: 'FinSight tidak menampilkan 0% karena itu dapat memberi arti yang keliru.',
+      basis: 'Pemasukan ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '.'
+    });
+    else if (sr.status !== 'SYARAT_TERPENUHI') insights.push({
+      title: 'Data Savings Rate masih terbatas',
+      meaning: 'Angka sementara hanya membandingkan catatan yang sudah dimasukkan, belum tentu mewakili seluruh aktivitas bulan ini.',
+      impact: 'Nilainya bisa berubah ketika catatan dilengkapi.',
+      basis: 'Pemasukan ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '; ' + (sr.note || 'syarat teknis penyajian belum terpenuhi') + '.'
+    });
+    if (debts.some(function (x) { return x.status === 'AKTIF' && x.mode === 'CICILAN' && x.installment > 0; })) {
+      var inst = debts.filter(function (x) { return x.status === 'AKTIF' && x.mode === 'CICILAN'; }).reduce(function (n, x) { return n + (Number(x.installment) || 0); }, 0);
+      insights.push({
+        title: 'Saldo dan nominal cicilan bulanan',
+        meaning: 'Saldo likuid saat ini ' + money(total) + '; nominal cicilan aktif per bulan ' + money(inst) + '.',
+        impact: 'Ini perbandingan nominal, bukan proyeksi ketahanan saldo atau jaminan kemampuan membayar.',
+        basis: money(total) + ' ÷ ' + money(inst) + (inst ? ' = ' + (total / inst).toFixed(2).replace('.', ',') + ' kali.' : '.')
+      });
+    }
+    if (!insights.length) insights.push({
+      title: 'Belum ada hal khusus yang perlu ditafsirkan',
+      meaning: 'Angka utama mengikuti saldo dan transaksi yang sudah kamu catat.',
+      impact: 'FinSight tidak membuat kesimpulan di luar data yang tersedia.',
+      basis: 'Saldo likuid ' + money(total) + '; pemasukan bulan ini ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '.'
+    });
+    insights = insights.slice(0, 3);
+    var memahami = el('section', { class: 'card', id: 'understanding', 'aria-labelledby': 'h-understanding' },
+      el('h2', { id: 'h-understanding', text: 'Memahami Angkamu' }),
+      insights.map(function (x) {
+        return el('article', { class: 'card' },
+          el('h3', { text: x.title }),
+          el('p', {}, el('strong', { text: 'Arti. ' }), x.meaning),
+          el('p', {}, el('strong', { text: 'Dampak. ' }), x.impact),
+          el('p', { class: 'hint' }, el('strong', { text: 'Dasar. ' }), x.basis));
+      }),
+      el('p', { class: 'hint', text: 'Penjelasan dibentuk dari aturan tetap dan angka yang tercatat, bukan keputusan otomatis atau prediksi.' }));
+
+    var detail = el('details', { class: 'card', id: 'detail-wrap' },
+      el('summary', { text: 'Detail' }),
+      el('div', { id: 'tracker-bottom' }),
       settingsCard(d, persistTxt));
+    var main = el('main', { class: 'wrap', id: 'dashboard' },
+      el('h1', { id: 'dash-title', text: 'FinSight Trial' }),
+      d.rebuilt ? el('p', { class: 'warn', id: 'rebuilt-note', text: 'Data turunan aset dan utang dibangun ulang dari catatan transaksi.' }) : null,
+      pos, bulan, memahami, detail);
     mount(main);
   }
   function settingsCard(d, persistTxt) {
