@@ -1,0 +1,29 @@
+name: Trial Preview Checks
+
+on:
+  push:
+    branches: [trial-preview]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check JavaScript syntax
+        run: |
+          node --check assets/engine/FinSightVNextEngine.js
+          node --check assets/domain.js
+          node --check assets/ledger.js
+          node --check assets/store.js
+          node --check assets/app.js
+          node --check assets/tracker.js
+      - name: Check patch whitespace
+        run: git diff --check
