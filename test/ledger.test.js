@@ -40,4 +40,26 @@ t('retry request id sama + payload sama tidak menggandakan efek (idempoten)', ()
 t('request id sama + payload beda ditolak', () => { const e = JSON.parse(JSON.stringify(ledger[2])); e.seq = 999; e.data.amount = 1; e.result = { x: 1 }; throws(() => Lg.replay(OPEN, ledger.concat([e])), 'REQUEST_ID_REUSED_WITH_DIFFERENT_PAYLOAD'); });
 t('describe & cashflow & netWorth', () => { const s = st(); const dsc = ledger.map(e => Lg.describe(e, s)); if (dsc.some(x => !x.title)) throw new Error('judul kosong'); const cf = Lg.cashflow(ledger, NOW, 3); eq(cf.length, 3); eq(cf[0].label, 'Nov 2026'); eq(cf[0].net, cf[0].income - cf[0].expense); const nw = Lg.netWorth(s); eq(nw.net, nw.liquid + nw.assets - nw.debts); });
 t('catatan >300 karakter ditolak', () => throws(() => add('REVALUE_ASSET', { assetId: aid, value: '1', note: 'x'.repeat(301), transactionDate: '2026-11-06' }), 'NOTE_TOO_LONG'));
+t('VOID: hanya transaksi terbaru yang dapat dibatalkan; pembatalan berurutan memulihkan ledger', () => {
+  const before = st();
+  const inc = add('INCOME', { amount: '100000', source: 'Gaji', transactionDate: '2026-11-06', allocations: { CASH: '100000' } });
+  const exp = add('EXPENSE', { amount: '25000', locationId: 'CASH', category: 'Transportasi', transactionDate: '2026-11-06' });
+  throws(() => Lg.build(OPEN, ledger, { kind: 'VOID', form: { targetRequestId: inc.requestId, reason: 'salah input' }, requestId: 'req_void_reject_abcdefgh' }, NOW), 'VOID_REQUIRES_LATEST_TRANSACTION');
+  add('VOID', { targetRequestId: exp.requestId, reason: 'Salah catat transaksi' });
+  let mid = st();
+  eq(mid.locations.CASH, before.locations.CASH + 100000);
+  eq(mid.expense, before.expense);
+  add('VOID', { targetRequestId: inc.requestId, reason: 'Pemasukan tercatat keliru' });
+  const after = st();
+  eq(after.locations.CASH, before.locations.CASH);
+  eq(after.income, before.income);
+  eq(after.expense, before.expense);
+  const cancelled = after.ledger.filter(e => e.requestId === inc.requestId || e.requestId === exp.requestId);
+  if (cancelled.some(e => e.status !== 'VOIDED')) throw new Error('status target tidak menjadi VOIDED');
+  if (after.ledger.filter(e => e.type === 'VOID').length !== 2) throw new Error('jejak VOID tidak tersimpan');
+});
+t('VOID menolak alasan terlalu pendek', () => {
+  const target = ledger.filter(e => e.type !== 'VOID').slice(-1)[0];
+  throws(() => Lg.build(OPEN, ledger, { kind: 'VOID', form: { targetRequestId: target.requestId, reason: 'no' }, requestId: 'req_void_reason_abcdefgh' }, NOW), 'VOID_REASON_REQUIRED');
+});
 console.log('\nHASIL:', pass, 'lulus,', fail, 'gagal'); process.exit(fail ? 1 : 0);
