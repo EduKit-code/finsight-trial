@@ -121,3 +121,87 @@ function fv3Withdraw_(state, requestId, assetId, to, amount) {
     return { assetId, to, amount, assetValue: a.value };
   });
 }
+
+function fv3VoidTransaction_(state, requestId, targetRequestId, reason) {
+  return fv3Run_(state, requestId, 'VOID', { targetRequestId, reason }, s => {
+    if (typeof targetRequestId !== 'string' || !targetRequestId) throw new Error('VOID_TARGET_INVALID');
+    if (typeof reason !== 'string' || reason.trim().length < 3 || reason.length > 300) throw new Error('VOID_REASON_REQUIRED');
+    const target = s.ledger.find(e => e.requestId === targetRequestId && e.type !== 'VOID');
+    if (!target) throw new Error('VOID_TARGET_NOT_FOUND');
+    if (target.status !== 'COMMITTED') throw new Error('VOID_TARGET_NOT_COMMITTED');
+    const later = s.ledger.slice(s.ledger.indexOf(target) + 1).some(e => e.type !== 'VOID' && e.status !== 'VOIDED');
+    if (later) throw new Error('VOID_REQUIRES_LATEST_TRANSACTION');
+    const d = target.data, r = target.result;
+    switch (target.type) {
+      case 'INCOME': {
+        for (const [id, amount] of Object.entries(d.allocations || {})) fv3Debit_(s, id, amount);
+        s.income -= d.amount; s.unallocatedIncome -= r.unallocated;
+        if (s.income < 0 || s.unallocatedIncome < 0) throw new Error('VOID_INVARIANT_FAILED');
+        break;
+      }
+      case 'ALLOCATE_INCOME':
+        fv3Debit_(s, d.locationId, d.amount); s.unallocatedIncome = fv3SafeAdd_(s.unallocatedIncome, d.amount, 'UNALLOCATED_INCOME'); break;
+      case 'EXPENSE':
+        fv3Credit_(s, d.locationId, d.amount); s.expense -= d.amount; if (s.expense < 0) throw new Error('VOID_INVARIANT_FAILED'); break;
+      case 'OPEN_DEBT': {
+        const debt=fv3HasOwn_(s.debts,d.debtId)?s.debts[d.debtId]:null;
+        if(!debt || debt.remaining!==d.remaining || debt.status!==(d.remaining===0?'LUNAS':'AKTIF')) throw new Error('VOID_DEPENDENCY_EXISTS');
+        delete s.debts[d.debtId]; break;
+      }
+      case 'ADD_DEBT': {
+        const debt = fv3HasOwn_(s.debts, d.debtId) ? s.debts[d.debtId] : null;
+        if (!debt || debt.remaining !== debt.principal || debt.status !== 'AKTIF') throw new Error('VOID_DEPENDENCY_EXISTS');
+        delete s.debts[d.debtId]; break;
+      }
+      case 'DEBT_PAYMENT': {
+        const debt = fv3HasOwn_(s.debts, d.debtId) ? s.debts[d.debtId] : null;
+        if (!debt) throw new Error('VOID_DEPENDENCY_EXISTS');
+        fv3Credit_(s, d.locationId, d.amount); debt.remaining = fv3SafeAdd_(debt.remaining, d.amount, 'DEBT_REMAINING');
+        if (debt.remaining > debt.principal) throw new Error('VOID_INVARIANT_FAILED'); debt.status = 'AKTIF'; break;
+      }
+      case 'OPEN_RECEIVABLE': {
+        const rec=fv3HasOwn_(s.receivables,d.receivableId)?s.receivables[d.receivableId]:null;
+        if(!rec || rec.remaining!==d.remaining || rec.status!==(d.remaining===0?'LUNAS':'AKTIF')) throw new Error('VOID_DEPENDENCY_EXISTS');
+        delete s.receivables[d.receivableId]; break;
+      }
+      case 'OPEN_ASSET': {
+        const a=fv3HasOwn_(s.assets,d.assetId)?s.assets[d.assetId]:null;
+        if(!a || a.value!==d.value || a.contribution!==d.contribution) throw new Error('VOID_DEPENDENCY_EXISTS');
+        delete s.assets[d.assetId]; break;
+      }
+      case 'REVALUE_ASSET': {
+        const a=fv3HasOwn_(s.assets,d.assetId)?s.assets[d.assetId]:null;
+        if(!a || a.value!==d.value) throw new Error('VOID_DEPENDENCY_EXISTS');
+        a.value=r.before; break;
+      }
+      case 'ADD_RECEIVABLE': {
+        const rec = fv3HasOwn_(s.receivables, d.receivableId) ? s.receivables[d.receivableId] : null;
+        if (!rec || rec.remaining !== r.remaining || rec.status !== 'AKTIF') throw new Error('VOID_DEPENDENCY_EXISTS');
+        delete s.receivables[d.receivableId]; break;
+      }
+      case 'RECEIVABLE_RECEIPT': {
+        const rec = fv3HasOwn_(s.receivables, d.receivableId) ? s.receivables[d.receivableId] : null;
+        if (!rec || s.locations[d.locationId] < d.amount || s.receipts < d.amount) throw new Error('VOID_INVARIANT_FAILED');
+        fv3Debit_(s, d.locationId, d.amount); rec.remaining = fv3SafeAdd_(rec.remaining, d.amount, 'RECEIVABLE_REMAINING');
+        rec.status = 'AKTIF'; s.receipts -= d.amount; break;
+      }
+      case 'ADJUST_BALANCE':
+        if (s.locations[d.locationId] !== r.after) throw new Error('VOID_DEPENDENCY_EXISTS');
+        s.locations[d.locationId] = r.before; break;
+      case 'TRANSFER': fv3Debit_(s, d.to, d.amount); fv3Credit_(s, d.from, d.amount); break;
+      case 'DCA': {
+        const a = fv3HasOwn_(s.assets, d.assetId) ? s.assets[d.assetId] : null;
+        if (!a || a.value < d.amount || a.contribution < d.amount) throw new Error('VOID_INVARIANT_FAILED');
+        a.value -= d.amount; a.contribution -= d.amount; fv3Credit_(s, d.from, d.amount); break;
+      }
+      case 'WD': {
+        const a = fv3HasOwn_(s.assets, d.assetId) ? s.assets[d.assetId] : null;
+        if (!a || s.locations[d.to] < d.amount) throw new Error('VOID_INVARIANT_FAILED');
+        fv3Debit_(s, d.to, d.amount); a.value = fv3SafeAdd_(a.value, d.amount, 'ASSET_VALUE'); break;
+      }
+      default: throw new Error('VOID_TYPE_NOT_SUPPORTED');
+    }
+    target.status = 'VOIDED'; target.voidReason = reason.trim();
+    return { targetRequestId, targetType: target.type, status: 'VOIDED', reason: reason.trim() };
+  });
+}
