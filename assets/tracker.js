@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   var D = window.FSDomain, S = window.FSStore, Lg = window.FSLedger, ROOT = document.getElementById('app');
-  var T = { form: null, rid: null, flash: '', all: false, busy: false, injecting: false, v: 0, ctx: null };
+  var T = { form: null, rid: null, flash: '', all: false, busy: false, confirming: false, injecting: false, v: 0, ctx: null };
   var chan = null; try { chan = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('finsight-trial') : null; } catch (e) { chan = null; }
   function el(tag, props) {
     var n = document.createElement(tag); props = props || {};
@@ -164,10 +164,37 @@
       return sum + (Number(state.assets[id].contribution) || 0);
     }, 0);
   }
+  /* Dialog konfirmasi VOID internal (pengganti window.confirm). Tidak menyentuh handler VOID: hanya memanggil onYes() satu kali bila pemilik memilih "Ya, batalkan". */
+  function confirmVoid(onYes) {
+    var p = (T.form && T.form.preset) || {}, target = ((T.ctx && T.ctx.ledger) || []).filter(function (e) { return e.requestId === p.targetRequestId; })[0];
+    if (!target) { showMsg('Catatan yang akan dibatalkan tidak ditemukan. Muat ulang Riwayat lalu coba lagi.'); return; }
+    var d = Lg.describe(target, T.ctx.st), opener = document.activeElement, used = false;
+    var back = el('button', { type: 'button', id: 'void-confirm-back', text: 'Kembali' }), yes = el('button', { type: 'button', class: 'primary', id: 'void-confirm-yes', text: 'Ya, batalkan' });
+    var dlg = el('div', { class: 'modal', id: 'void-confirm', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'void-confirm-title', 'aria-describedby': 'void-confirm-desc' },
+      el('h3', { id: 'void-confirm-title', text: 'Konfirmasi pembatalan' }),
+      el('p', { id: 'void-confirm-desc', text: 'Batalkan transaksi ' + d.title + (d.amount ? ' sebesar ' + rp(d.amount) : '') + '?' }),
+      el('p', { class: 'hint', text: 'Dampak keuangan transaksi ini akan dibalik. Riwayat transaksi dan alasan pembatalan tetap disimpan.' }),
+      el('div', { class: 'row tight' }, back, yes));
+    var wrap = el('div', { class: 'modal-backdrop', id: 'void-confirm-wrap' }, dlg);
+    function close() { document.removeEventListener('keydown', onKey, true); if (wrap.parentNode) wrap.parentNode.removeChild(wrap); T.confirming = false; if (opener && opener.focus && document.body.contains(opener)) opener.focus(); }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
+      if (e.key === 'Tab') { var first = back, last = yes; if (!dlg.contains(document.activeElement)) { e.preventDefault(); first.focus(); } else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); } }
+    }
+    back.addEventListener('click', close);
+    yes.addEventListener('click', function () { if (used) return; used = true; yes.disabled = true; back.disabled = true; opener = null; close(); onYes(); });
+    T.confirming = true; document.addEventListener('keydown', onKey, true); document.body.appendChild(wrap); back.focus();
+  }
   function submit() {
+    if (T.busy || T.confirming || !T.form) return;
+    if (T.form.kind === 'VOID') {
+      if (v('f-void-reason').trim().length < 3) { showMsg('Alasan pembatalan minimal 3 karakter.'); return; }
+      showMsg(''); confirmVoid(doSubmit); return;
+    }
+    doSubmit();
+  }
+  function doSubmit() {
     if (T.busy || !T.form) return; var btn = document.getElementById('tr-save'), kind = T.form.kind, def = FORMS[kind];
-    if (kind === 'VOID' && v('f-void-reason').trim().length < 3) { showMsg('Alasan pembatalan minimal 3 karakter.'); return; }
-    if (kind === 'VOID' && !window.confirm('Batalkan catatan ini? Dampak keuangan akan dibalik, tetapi jejak transaksi dan alasan pembatalan tetap tersimpan.')) return;
     T.busy = true; if (btn) btn.disabled = true; showMsg('');
     append({ kind: kind, form: def.collect(), requestId: T.rid }).then(function (saved) {
       var ev = saved.event, d = Lg.describe(ev, saved.after);

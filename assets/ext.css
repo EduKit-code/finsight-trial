@@ -2,3 +2,8 @@
 html,body{max-width:100%;overflow-x:hidden}.wrap,.card,main{min-width:0}input[type=date]{min-width:0;max-width:100%}
 .list li{flex-wrap:wrap}.acts{display:flex;gap:6px;flex-wrap:wrap;width:100%;margin-top:4px}.acts button{min-height:40px;padding:6px 12px}
 .tiles button{width:100%}.hist li{align-items:flex-start}.hist .amt{font-weight:700;white-space:nowrap}.hist .pos{color:var(--accent)}
+
+/* Dialog konfirmasi VOID (internal). Memakai token warna yang sama sehingga terbaca di tema terang dan gelap. */
+.modal-backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));background:rgba(0,0,0,.55)}
+.modal{width:100%;max-width:420px;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+.modal h3{margin:0 0 8px}.modal p{margin:8px 0}.modal .row.tight{justify-content:flex-end;margin-top:12px}
