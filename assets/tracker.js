@@ -88,7 +88,7 @@
   function firstOk(c) { return D.LOCS.filter(function (k) { return c.st.locations[k] > 0; })[0] || 'CASH'; }
   function assetOpts(c) { return Object.keys(c.st.assets).map(function (id) { return [id, c.st.assets[id].name + ' (' + rp(c.st.assets[id].value) + ')']; }); }
   function debtOpts(c) { return Object.keys(c.st.debts).filter(function (id) { return c.st.debts[id].status === 'AKTIF'; }).map(function (id) { return [id, c.st.debts[id].name + ' · sisa ' + rp(c.st.debts[id].remaining)]; }); }
-  function notice(t) { return el('p', { class: 'warn', role: 'status', text: t }); }
+  function notice(t) { return el('p', { class: 'warn', role: 'status', 'data-blocking': '1', text: t }); }
   var COMMON = function () { return { transactionDate: v('f-date'), note: v('f-note') }; };
   function withCommon(o) { var k = COMMON(); o.transactionDate = k.transactionDate; o.note = k.note; return o; }
 
@@ -151,11 +151,12 @@
   };
   function openForm(kind, preset) {
     T.form = { kind: kind, preset: preset || null }; T.rid = D.newRequestId(); T.flash = ''; var box = document.getElementById('tr-form'); if (!box) return;
-    var def = FORMS[kind], nodes = def.build(T.ctx, preset), blocked = nodes.some(function (n) { return n && n.className === 'warn'; }), ok = !blocked;
+    var def = FORMS[kind], nodes = def.build(T.ctx, preset), blocked = nodes.some(function (n) { return n && n.getAttribute && n.getAttribute('data-blocking') === '1'; }), ok = !blocked;
     box.replaceChildren(el('div', { class: 'card', id: 'form-' + kind }, el('h3', { text: def.title }), nodes, el('div', { id: 'tr-msg', role: 'alert', 'aria-live': 'assertive' }),
-      el('div', { class: 'row tight' }, ok ? el('button', { type: 'button', class: 'primary', id: 'tr-save', text: 'Simpan', onclick: submit }) : null, el('button', { type: 'button', id: 'tr-cancel', text: 'Batal', onclick: function () { T.form = null; box.replaceChildren(); } }))));
+      el('div', { class: 'row tight' }, ok ? el('button', { type: 'button', class: 'primary', id: 'tr-save', text: kind === 'VOID' ? 'Batalkan catatan' : 'Simpan', disabled: kind === 'VOID', onclick: submit }) : null, el('button', { type: 'button', id: 'tr-cancel', text: 'Batal', onclick: function () { T.form = null; box.replaceChildren(); } }))));
     var top = document.getElementById('tracker-top'); if (top && top.scrollIntoView) top.scrollIntoView({ block: 'start' });
-    var f = box.querySelector('input,select'); if (f) f.focus({ preventScroll: true });
+    if (kind === 'VOID') { var rs = document.getElementById('f-void-reason'), sv = document.getElementById('tr-save'); if (rs && sv) rs.addEventListener('input', function () { sv.disabled = rs.value.trim().length < 3; }); }
+    var f = box.querySelector('input,select,textarea'); if (f) f.focus({ preventScroll: true });
   }
   function showMsg(t) { var b = document.getElementById('tr-msg'); if (b) b.replaceChildren(t ? el('p', { class: 'err', text: t }) : ''); }
   function contributionTotal(state) {
@@ -165,6 +166,7 @@
   }
   function submit() {
     if (T.busy || !T.form) return; var btn = document.getElementById('tr-save'), kind = T.form.kind, def = FORMS[kind];
+    if (kind === 'VOID' && v('f-void-reason').trim().length < 3) { showMsg('Alasan pembatalan minimal 3 karakter.'); return; }
     if (kind === 'VOID' && !window.confirm('Batalkan catatan ini? Dampak keuangan akan dibalik, tetapi jejak transaksi dan alasan pembatalan tetap tersimpan.')) return;
     T.busy = true; if (btn) btn.disabled = true; showMsg('');
     append({ kind: kind, form: def.collect(), requestId: T.rid }).then(function (saved) {
