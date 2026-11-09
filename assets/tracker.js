@@ -113,11 +113,11 @@
       return [el('p', { class: 'hint', text: 'Belum dialokasikan: ' + rp(u) + '. Menempatkannya memindahkan ke saldo lokasi, bukan pemasukan baru.' }), sel('f-loc', 'Ke lokasi', locOpts(c, false), 'REKENING'), money('f-amount', 'Jumlah', u), dateF(c), noteF()];
     }, collect: function () { return withCommon({ locationId: v('f-loc'), amount: v('f-amount') }); } },
     DCA: { title: 'Setor ke aset', build: function (c, p) {
-      var o = assetOpts(c); if (!o.length) return [notice('Belum ada aset. Tambahkan aset dulu.')];
+      var o = assetOpts(c); if (!o.length) return [notice('Belum ada aset. Tambahkan aset terlebih dahulu, lalu gunakan Setor untuk memindahkan saldo ke aset.'), el('button', { type: 'button', text: '+ Tambah aset', onclick: function () { openForm('OPEN_ASSET'); } })];
       return [sel('f-asset', 'Aset', o, p && p.assetId), money('f-amount', 'Jumlah setoran'), sel('f-from', 'Dari lokasi', locOpts(c, true), firstOk(c)), dateF(c), noteF(), el('p', { class: 'hint', text: 'Uang pindah dari saldo ke aset (nilai dan total setoran naik). Bukan pengeluaran.' })];
     }, collect: function () { return withCommon({ assetId: v('f-asset'), amount: v('f-amount'), from: v('f-from') }); } },
     WD: { title: 'Tarik dari aset', build: function (c, p) {
-      var o = assetOpts(c); if (!o.length) return [notice('Belum ada aset.')];
+      var o = assetOpts(c); if (!o.length) return [notice('Belum ada aset. Tambahkan aset terlebih dahulu sebelum melakukan penarikan.'), el('button', { type: 'button', text: '+ Tambah aset', onclick: function () { openForm('OPEN_ASSET'); } })];
       return [sel('f-asset', 'Aset', o, p && p.assetId), money('f-amount', 'Jumlah penarikan'), sel('f-to', 'Ke lokasi', locOpts(c, false), 'REKENING'), dateF(c), noteF(), el('p', { class: 'hint', text: 'Penarikan memindahkan nilai aset ke saldo. Bukan pemasukan.' })];
     }, collect: function () { return withCommon({ assetId: v('f-asset'), amount: v('f-amount'), to: v('f-to') }); } },
     REVALUE_ASSET: { title: 'Perbarui nilai aset', build: function (c, p) {
@@ -135,7 +135,7 @@
   };
   function openForm(kind, preset) {
     T.form = { kind: kind, preset: preset || null }; T.rid = D.newRequestId(); T.flash = ''; var box = document.getElementById('tr-form'); if (!box) return;
-    var def = FORMS[kind], nodes = def.build(T.ctx, preset), ok = !(nodes.length === 1 && nodes[0].className === 'warn');
+    var def = FORMS[kind], nodes = def.build(T.ctx, preset), blocked = nodes.some(function (n) { return n && n.className === 'warn'; }), ok = !blocked;
     box.replaceChildren(el('div', { class: 'card', id: 'form-' + kind }, el('h3', { text: def.title }), nodes, el('div', { id: 'tr-msg', role: 'alert', 'aria-live': 'assertive' }),
       el('div', { class: 'row tight' }, ok ? el('button', { type: 'button', class: 'primary', id: 'tr-save', text: 'Simpan', onclick: submit }) : null, el('button', { type: 'button', id: 'tr-cancel', text: 'Batal', onclick: function () { T.form = null; box.replaceChildren(); } }))));
     var top = document.getElementById('tracker-top'); if (top && top.scrollIntoView) top.scrollIntoView({ block: 'start' });
@@ -170,7 +170,7 @@
 
   /* ---------- tampilan ---------- */
   function renderTop(c) {
-    var btns = [['INCOME', '+ Pemasukan'], ['EXPENSE', '− Pengeluaran'], ['DEBT_PAYMENT', 'Bayar utang'], ['TRANSFER', 'Pindah uang']]; if (c.st.unallocatedIncome > 0) btns.push(['ALLOCATE_INCOME', 'Tempatkan sisa pemasukan']);
+    var btns = [['INCOME', '+ Pemasukan'], ['EXPENSE', '− Pengeluaran'], ['DEBT_PAYMENT', 'Bayar utang'], ['TRANSFER', 'Pindah uang'], ['DCA', 'Setor ke aset'], ['WD', 'Tarik dari aset']]; if (!Object.keys(c.st.assets).length) btns.push(['OPEN_ASSET', '+ Tambah aset']); if (c.st.unallocatedIncome > 0) btns.push(['ALLOCATE_INCOME', 'Tempatkan sisa pemasukan']);
     var f = T.flash; T.flash = '';
     var receipt = f ? el('div', { class: 'okbox', id: 'tr-flash', role: 'status' },
       el('strong', { text: 'Dicatat' }), el('p', { text: f.recorded }),
