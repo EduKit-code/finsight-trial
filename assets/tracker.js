@@ -155,7 +155,7 @@
           'Nilai aset: ' + signed(Lg.netWorth(saved.after).assets - Lg.netWorth(saved.before).assets),
           'Sisa utang: ' + signed(Lg.netWorth(saved.after).debts - Lg.netWorth(saved.before).debts),
           'Kekayaan bersih tercatat: ' + signed(Lg.netWorth(saved.after).net - Lg.netWorth(saved.before).net)
-        ].filter(function (x) { return !/\+Rp0$|−Rp0$/.test(x); }),
+        ].filter(function (x) { return !/Rp 0$/.test(x); }),
         unchanged: ev.type === 'DEBT_PAYMENT' ? ['Pembayaran utang bukan pengeluaran konsumsi.', 'Savings Rate tidak dikurangi oleh pembayaran utang.'] :
           (ev.type === 'TRANSFER' || ev.type === 'DCA' || ev.type === 'WD' ? ['Bukan pemasukan atau pengeluaran konsumsi.'] : [])
       };
