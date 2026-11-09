@@ -421,6 +421,9 @@
   function renderDashboard() {
     if (!A.dash) return loadDashboard();
     var d = A.dash, st = d.st, now = new Date(), month = D.monthSummary(d.ledger, now), sr = D.savingsRate(month, d.open.snapshotDate, now), total = D.totalBalance(st);
+    var relevantCount = d.ledger.filter(function (e) { return e.status === 'COMMITTED' && e.data && String(e.data.transactionDate || '').slice(0, 7) === D.todayStr(now).slice(0, 7) && (e.type === 'INCOME' || e.type === 'EXPENSE'); }).length;
+    var dayOfMonth = Number(D.todayStr(now).slice(8, 10));
+    var savingsLimited = relevantCount < 5 || dayOfMonth < 7;
     var assets = Object.keys(st.assets).map(function (k) { return st.assets[k]; });
     var debts = Object.keys(st.debts).map(function (k) { return st.debts[k]; });
     var net = total + assets.reduce(function (n, a) { return n + (Number(a.value) || 0); }, 0) - debts.reduce(function (n, x) { return n + (Number(x.remaining) || 0); }, 0);
@@ -455,17 +458,17 @@
       impact: 'Jumlah ini belum menambah Saldo Berjalan.',
       basis: 'Sisa pemasukan belum ditempatkan: ' + money(st.unallocatedIncome) + '.'
     });
-    if (sr.value === null) insights.push({
+    if (sr.state === 'noincome') insights.push({
       title: 'Savings Rate belum dapat dihitung',
       meaning: 'Belum ada pemasukan bulan ini yang tercatat.',
       impact: 'FinSight tidak menampilkan 0% karena itu dapat memberi arti yang keliru.',
       basis: 'Pemasukan ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '.'
     });
-    else if (sr.status !== 'SYARAT_TERPENUHI') insights.push({
+    else if (savingsLimited) insights.push({
       title: 'Data Savings Rate masih terbatas',
       meaning: 'Angka sementara hanya membandingkan catatan yang sudah dimasukkan, belum tentu mewakili seluruh aktivitas bulan ini.',
       impact: 'Nilainya bisa berubah ketika catatan dilengkapi.',
-      basis: 'Pemasukan ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '; ' + (sr.note || 'syarat teknis penyajian belum terpenuhi') + '.'
+      basis: 'Pemasukan ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '; ' + relevantCount + ' catatan relevan; hari ke-' + dayOfMonth + '.'
     });
     if (debts.some(function (x) { return x.status === 'AKTIF' && x.mode === 'CICILAN' && x.installment > 0; })) {
       var inst = debts.filter(function (x) { return x.status === 'AKTIF' && x.mode === 'CICILAN'; }).reduce(function (n, x) { return n + (Number(x.installment) || 0); }, 0);
