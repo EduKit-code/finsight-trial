@@ -142,20 +142,33 @@
     var f = box.querySelector('input,select'); if (f) f.focus({ preventScroll: true });
   }
   function showMsg(t) { var b = document.getElementById('tr-msg'); if (b) b.replaceChildren(t ? el('p', { class: 'err', text: t }) : ''); }
+  function contributionTotal(state) {
+    return Object.keys(state.assets || {}).reduce(function (sum, id) {
+      return sum + (Number(state.assets[id].contribution) || 0);
+    }, 0);
+  }
   function submit() {
     if (T.busy || !T.form) return; var btn = document.getElementById('tr-save'), kind = T.form.kind, def = FORMS[kind];
     T.busy = true; if (btn) btn.disabled = true; showMsg('');
     append({ kind: kind, form: def.collect(), requestId: T.rid }).then(function (saved) {
       var ev = saved.event, d = Lg.describe(ev, saved.after);
+      var before = Lg.netWorth(saved.before), after = Lg.netWorth(saved.after);
+      var locationChanges = D.LOCS.map(function (id) {
+        var delta = saved.after.locations[id] - saved.before.locations[id];
+        return delta ? D.LOC_LABEL[id] + ' ' + signed(delta) : null;
+      }).filter(Boolean);
+      var changed = [
+        'Saldo likuid total: ' + signed(after.liquid - before.liquid),
+        'Nilai aset: ' + signed(after.assets - before.assets),
+        'Total setoran aset: ' + signed(contributionTotal(saved.after) - contributionTotal(saved.before)),
+        'Sisa utang: ' + signed(before.debts - after.debts),
+        'Kekayaan bersih tercatat: ' + signed(after.net - before.net)
+      ].filter(function (x) { return !/Rp 0$/.test(x); });
+      if (locationChanges.length) changed.unshift('Perubahan lokasi: ' + locationChanges.join(' · '));
       T.busy = false;
       T.flash = {
         recorded: d.title + (d.amount ? ' · ' + rp(d.amount) : '') + '.',
-        changed: [
-          'Saldo likuid: ' + signed(Lg.netWorth(saved.after).liquid - Lg.netWorth(saved.before).liquid),
-          'Nilai aset: ' + signed(Lg.netWorth(saved.after).assets - Lg.netWorth(saved.before).assets),
-          'Sisa utang: ' + signed(Lg.netWorth(saved.after).debts - Lg.netWorth(saved.before).debts),
-          'Kekayaan bersih tercatat: ' + signed(Lg.netWorth(saved.after).net - Lg.netWorth(saved.before).net)
-        ].filter(function (x) { return !/Rp 0$/.test(x); }),
+        changed: changed,
         unchanged: ev.type === 'DEBT_PAYMENT' ? ['Pembayaran utang bukan pengeluaran konsumsi.', 'Savings Rate tidak dikurangi oleh pembayaran utang.'] :
           (ev.type === 'TRANSFER' || ev.type === 'DCA' || ev.type === 'WD' ? ['Bukan pemasukan atau pengeluaran konsumsi.'] : [])
       };
