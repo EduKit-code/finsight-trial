@@ -29,7 +29,7 @@
   function append(spec) {
     return S.open().then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx, out = null, err = null, got = {}, names = ['opening', 'ledger', 'incomeCategories', 'expenseCategories'], left = names.length;
+        var tx, out = null, err = null, got = {}, names = ['opening', 'ledger', 'incomeCategories', 'expenseCategories', 'assets', 'debts'], left = names.length;
         try { tx = db.transaction(['opening', 'ledger', 'requests', 'incomeCategories', 'expenseCategories'], 'readwrite'); } catch (e) { return reject(e); }
         tx.oncomplete = function () { resolve(out); };
         tx.onabort = function () { reject(err || tx.error || new Error('TX_ABORTED')); };
@@ -40,9 +40,27 @@
             if (!got.opening.length) throw new Error('OPENING_NOT_CONFIRMED');
             spec.cats = { income: got.incomeCategories, expense: got.expenseCategories };
             var ev = Lg.build(got.opening[0], got.ledger, spec, new Date());
-            tx.objectStore('ledger').add({ requestId: ev.requestId, type: ev.type, data: ev.data, result: ev.result, status: 'COMMITTED', createdAt: new Date().toISOString() });
+            var createdAt = new Date().toISOString();
+            tx.objectStore('ledger').add({ requestId: ev.requestId, type: ev.type, data: ev.data, result: ev.result, status: 'COMMITTED', createdAt: createdAt });
             tx.objectStore('requests').put({ requestId: ev.requestId, result: ev.result });
-            out = ev;
+
+            // Ledger tetap sumber kebenaran. Perbarui proyeksi aset/utang di transaksi IDB yang sama.
+            var beforeState = Lg.replay(got.opening[0], Lg.sortSeq(got.ledger));
+            var nextLedger = got.ledger.slice();
+            var nextSeq = nextLedger.reduce(function (m, x) { return Math.max(m, Number(x.seq) || 0); }, 0) + 1;
+            nextLedger.push({ seq: nextSeq, requestId: ev.requestId, type: ev.type, data: ev.data, result: ev.result, status: 'COMMITTED', createdAt: createdAt });
+            var afterState = Lg.replay(got.opening[0], Lg.sortSeq(nextLedger));
+            var assetStore = tx.objectStore('assets'), debtStore = tx.objectStore('debts');
+            assetStore.clear(); debtStore.clear();
+            Object.keys(afterState.assets).forEach(function (id) {
+              var a = afterState.assets[id];
+              assetStore.put({ assetId: id, name: a.name, value: a.value, contribution: a.contribution });
+            });
+            Object.keys(afterState.debts).forEach(function (id) {
+              var d = afterState.debts[id];
+              debtStore.put({ debtId: id, name: d.name, principal: d.principal, remaining: d.remaining, mode: d.mode, installment: d.installment, status: d.status });
+            });
+            out = { event: ev, before: beforeState, after: afterState };
           } catch (e) { bail(e); }
         }
       });
@@ -127,8 +145,21 @@
   function submit() {
     if (T.busy || !T.form) return; var btn = document.getElementById('tr-save'), kind = T.form.kind, def = FORMS[kind];
     T.busy = true; if (btn) btn.disabled = true; showMsg('');
-    append({ kind: kind, form: def.collect(), requestId: T.rid }).then(function (ev) {
-      var d = Lg.describe(ev, T.ctx.st); T.busy = false; T.flash = 'Tersimpan: ' + d.title + (d.amount ? ' · ' + rp(d.amount) : '') + '.'; T.form = null; refresh();
+    append({ kind: kind, form: def.collect(), requestId: T.rid }).then(function (saved) {
+      var ev = saved.event, d = Lg.describe(ev, saved.after);
+      T.busy = false;
+      T.flash = {
+        recorded: d.title + (d.amount ? ' · ' + rp(d.amount) : '') + '.',
+        changed: [
+          'Saldo likuid: ' + signed(Lg.netWorth(saved.after).liquid - Lg.netWorth(saved.before).liquid),
+          'Nilai aset: ' + signed(Lg.netWorth(saved.after).assets - Lg.netWorth(saved.before).assets),
+          'Sisa utang: ' + signed(Lg.netWorth(saved.after).debts - Lg.netWorth(saved.before).debts),
+          'Kekayaan bersih tercatat: ' + signed(Lg.netWorth(saved.after).net - Lg.netWorth(saved.before).net)
+        ].filter(function (x) { return !/\+Rp0$|−Rp0$/.test(x); }),
+        unchanged: ev.type === 'DEBT_PAYMENT' ? ['Pembayaran utang bukan pengeluaran konsumsi.', 'Savings Rate tidak dikurangi oleh pembayaran utang.'] :
+          (ev.type === 'TRANSFER' || ev.type === 'DCA' || ev.type === 'WD' ? ['Bukan pemasukan atau pengeluaran konsumsi.'] : [])
+      };
+      T.form = null; refresh();
     }).catch(function (e) { T.busy = false; if (btn) btn.disabled = false; showMsg(errText(e)); });
   }
   /* Minta app.js memuat ulang Dashboard lewat kanal yang sama (pesan dari objek BroadcastChannel lain di halaman ini tetap diterima). Cadangan: muat ulang halaman. */
@@ -141,7 +172,12 @@
   function renderTop(c) {
     var btns = [['INCOME', '+ Pemasukan'], ['EXPENSE', '− Pengeluaran'], ['DEBT_PAYMENT', 'Bayar utang'], ['TRANSFER', 'Pindah uang']]; if (c.st.unallocatedIncome > 0) btns.push(['ALLOCATE_INCOME', 'Tempatkan sisa pemasukan']);
     var f = T.flash; T.flash = '';
-    return el('section', { class: 'card', id: 'tracker-top', 'data-v': String(T.v), 'aria-labelledby': 'h-catat' }, el('h2', { id: 'h-catat', text: 'Catat' }), f ? el('div', { class: 'okbox', id: 'tr-flash', role: 'status', text: f }) : null,
+    var receipt = f ? el('div', { class: 'okbox', id: 'tr-flash', role: 'status' },
+      el('strong', { text: 'Dicatat' }), el('p', { text: f.recorded }),
+      el('strong', { text: 'Yang berubah' }), f.changed.length ? el('ul', {}, f.changed.map(function (x) { return el('li', { text: x }); })) : el('p', { text: 'Tidak ada perubahan pada saldo, aset, utang, atau kekayaan bersih tercatat.' }),
+      el('strong', { text: 'Yang tidak berubah' }), f.unchanged.length ? el('ul', {}, f.unchanged.map(function (x) { return el('li', { text: x }); })) : el('p', { text: 'Tidak ada keterangan tambahan.' }),
+      el('button', { type: 'button', text: 'Tutup', onclick: function () { var n = document.getElementById('tr-flash'); if (n) n.remove(); } })) : null;
+    return el('section', { class: 'card', id: 'tracker-top', 'data-v': String(T.v), 'aria-labelledby': 'h-catat' }, el('h2', { id: 'h-catat', text: 'Catat' }), receipt,
       el('div', { class: 'tiles' }, btns.map(function (b) { return el('button', { type: 'button', id: 'btn-' + b[0], text: b[1], onclick: function () { openForm(b[0]); } }); })), el('div', { id: 'tr-form' }));
   }
   function signed(n) { return (n < 0 ? '−' : n > 0 ? '+' : '') + rp(Math.abs(n)); }
