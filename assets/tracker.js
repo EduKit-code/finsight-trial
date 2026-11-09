@@ -30,7 +30,7 @@
     return S.open().then(function (db) {
       return new Promise(function (resolve, reject) {
         var tx, out = null, err = null, got = {}, names = ['opening', 'ledger', 'incomeCategories', 'expenseCategories', 'assets', 'debts'], left = names.length;
-        try { tx = db.transaction(['opening', 'ledger', 'requests', 'incomeCategories', 'expenseCategories'], 'readwrite'); } catch (e) { return reject(e); }
+        try { tx = db.transaction(['opening', 'ledger', 'requests', 'incomeCategories', 'expenseCategories', 'assets', 'debts'], 'readwrite'); } catch (e) { return reject(e); }
         tx.oncomplete = function () { resolve(out); };
         tx.onabort = function () { reject(err || tx.error || new Error('TX_ABORTED')); };
         function bail(e) { err = err || e; try { tx.abort(); } catch (x) { reject(e); } }
