@@ -161,7 +161,7 @@
         'Saldo likuid total: ' + signed(after.liquid - before.liquid),
         'Nilai aset: ' + signed(after.assets - before.assets),
         'Total setoran aset: ' + signed(contributionTotal(saved.after) - contributionTotal(saved.before)),
-        'Sisa utang: ' + signed(before.debts - after.debts),
+        'Sisa utang: ' + signed(after.debts - before.debts),
         'Kekayaan bersih tercatat: ' + signed(after.net - before.net)
       ].filter(function (x) { return !/Rp 0$/.test(x); });
       if (locationChanges.length) changed.unshift('Perubahan lokasi: ' + locationChanges.join(' · '));
