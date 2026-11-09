@@ -42,6 +42,12 @@
             var ev = Lg.build(got.opening[0], got.ledger, spec, new Date());
             var createdAt = new Date().toISOString();
             tx.objectStore('ledger').add({ requestId: ev.requestId, type: ev.type, data: ev.data, result: ev.result, status: 'COMMITTED', createdAt: createdAt });
+            if (ev.type === 'VOID') {
+              var targetEvent = got.ledger.filter(function (x) { return x.requestId === ev.data.targetRequestId; })[0];
+              if (!targetEvent) throw new Error('VOID_TARGET_NOT_FOUND');
+              targetEvent.status = 'VOIDED'; targetEvent.voidReason = ev.data.reason;
+              tx.objectStore('ledger').put(targetEvent);
+            }
             tx.objectStore('requests').put({ requestId: ev.requestId, result: ev.result });
 
             // Ledger tetap sumber kebenaran. Perbarui proyeksi aset/utang di transaksi IDB yang sama.
@@ -120,6 +126,16 @@
       var o = assetOpts(c); if (!o.length) return [notice('Belum ada aset. Tambahkan aset terlebih dahulu sebelum melakukan penarikan.'), el('button', { type: 'button', text: '+ Tambah aset', onclick: function () { openForm('OPEN_ASSET'); } })];
       return [sel('f-asset', 'Aset', o, p && p.assetId), money('f-amount', 'Jumlah penarikan'), sel('f-to', 'Ke lokasi', locOpts(c, false), 'REKENING'), dateF(c), noteF(), el('p', { class: 'hint', text: 'Penarikan memindahkan nilai aset ke saldo. Bukan pemasukan.' })];
     }, collect: function () { return withCommon({ assetId: v('f-asset'), amount: v('f-amount'), to: v('f-to') }); } },
+    VOID: { title: 'Batalkan catatan transaksi', build: function (c, p) {
+      var target = (c.ledger || []).filter(function (e) { return e.requestId === (p && p.targetRequestId); })[0];
+      if (!target) return [notice('Catatan yang akan dibatalkan tidak ditemukan. Muat ulang Riwayat lalu coba lagi.')];
+      var d = Lg.describe(target, c.st);
+      return [el('p', { text: d.title + (d.amount ? ' · ' + rp(d.amount) : '') }),
+        el('p', { class: 'warn', text: 'Dampak catatan ini akan dibalik dari saldo, aset, utang, dan ringkasan terkait. Jejak pembatalan tetap disimpan di Riwayat.' }),
+        el('label', { for: 'f-void-reason', text: 'Alasan pembatalan' }),
+        el('textarea', { id: 'f-void-reason', maxlength: '300', rows: '3' }),
+        el('p', { class: 'hint', text: 'Minimal 3 karakter. Demi menjaga urutan saldo, hanya transaksi terakhir yang bisa dibatalkan.' })];
+    }, collect: function () { return { targetRequestId: T.form.preset.targetRequestId, reason: v('f-void-reason') }; } },
     REVALUE_ASSET: { title: 'Perbarui nilai aset', build: function (c, p) {
       var o = assetOpts(c); if (!o.length) return [notice('Belum ada aset.')];
       return [sel('f-asset', 'Aset', o, p && p.assetId), money('f-value', 'Nilai terbaru', p && p.assetId ? c.st.assets[p.assetId].value : ''), dateF(c), noteF(), el('p', { class: 'hint', text: 'Hanya memperbarui nilai catatan. Tidak mengubah saldo dan tidak dihitung pemasukan atau pengeluaran.' })];
@@ -149,6 +165,7 @@
   }
   function submit() {
     if (T.busy || !T.form) return; var btn = document.getElementById('tr-save'), kind = T.form.kind, def = FORMS[kind];
+    if (kind === 'VOID' && !window.confirm('Batalkan catatan ini? Dampak keuangan akan dibalik, tetapi jejak transaksi dan alasan pembatalan tetap tersimpan.')) return;
     T.busy = true; if (btn) btn.disabled = true; showMsg('');
     append({ kind: kind, form: def.collect(), requestId: T.rid }).then(function (saved) {
       var ev = saved.event, d = Lg.describe(ev, saved.after);
@@ -202,11 +219,20 @@
   }
   function historyCard(c) {
     var all = c.ledger.slice().reverse(), shown = T.all ? all : all.slice(0, 15);
+    var stateEvents = c.st.ledger || [], latest = stateEvents.filter(function (e) { return e.type !== 'VOID' && e.status === 'COMMITTED'; }).slice(-1)[0];
     var ul = el('ul', { class: 'list hist', id: 'hist-list' }, shown.map(function (e) {
-      var d = Lg.describe(e, c.st); return el('li', {}, el('div', {}, el('strong', { text: d.title }), el('div', { class: 'hint', text: d.detail }), el('div', { class: 'hint', text: Lg.evDate(e) + (e.data && e.data.note ? ' · ' + e.data.note : '') })),
-        el('span', { class: 'amt' + (d.sign === '+' ? ' pos' : ''), text: (d.sign === '-' ? '−' : d.sign) + rp(d.amount) }));
+      var d = Lg.describe(e, c.st), stateEvent = stateEvents.filter(function (x) { return x.requestId === e.requestId; })[0];
+      var status = stateEvent ? stateEvent.status : e.status;
+      var detail = d.detail + (status === 'VOIDED' ? ' · DIBATALKAN' : '');
+      var info = el('div', {}, el('strong', { text: d.title }), el('div', { class: 'hint', text: detail }), el('div', { class: 'hint', text: Lg.evDate(e) + (e.data && e.data.note ? ' · ' + e.data.note : '') }));
+      var amount = el('span', { class: 'amt' + (d.sign === '+' ? ' pos' : ''), text: (d.sign === '-' ? '−' : d.sign) + rp(d.amount) });
+      var actions = status === 'COMMITTED' && latest && latest.requestId === e.requestId && e.type !== 'VOID'
+        ? el('div', { class: 'acts' }, el('button', { type: 'button', text: 'Batalkan catatan', 'aria-label': 'Batalkan ' + d.title, onclick: function () { openForm('VOID', { targetRequestId: e.requestId }); } }))
+        : null;
+      return el('li', {}, info, amount, actions);
     }));
     return el('section', { class: 'card', id: 'history-card', 'aria-labelledby': 'h-hist' }, el('h2', { id: 'h-hist', text: 'Riwayat transaksi' }), all.length ? ul : el('p', { class: 'muted', text: 'Belum ada catatan.' }),
+      el('p', { class: 'hint', text: 'Pembatalan tidak menghapus jejak. Catatan yang dibatalkan tetap terlihat dan tidak lagi dihitung dalam saldo atau ringkasan.' }),
       all.length > 15 ? el('button', { type: 'button', id: 'hist-toggle', text: T.all ? 'Tampilkan lebih sedikit' : 'Tampilkan semua (' + all.length + ')', onclick: function () { T.all = !T.all; renderBottom(); } }) : null);
   }
   function manageCard(c) {
