@@ -6,7 +6,7 @@
   'use strict';
   var D = root.FSDomain, LOCS = D.LOCS, L = D.LOC_LABEL, baseDispatch = D.dispatch;
   Object.assign(D.MESSAGES, {
-    DEBT_INVALID: 'Pilih utang.', ASSET_INVALID: 'Pilih aset.', NOTE_TOO_LONG: 'Catatan maksimal 300 karakter.',
+    DEBT_INVALID: 'Pilih utang.', VOID_TARGET_INVALID: 'Catatan yang dipilih tidak valid.', VOID_TARGET_NOT_FOUND: 'Catatan yang akan dibatalkan tidak ditemukan.', VOID_TARGET_NOT_COMMITTED: 'Catatan ini sudah dibatalkan atau tidak aktif.', VOID_REQUIRES_LATEST_TRANSACTION: 'Untuk menjaga urutan saldo, hanya catatan transaksi terakhir yang bisa dibatalkan. Batalkan catatan terbaru lebih dulu.', VOID_REASON_REQUIRED: 'Alasan pembatalan wajib diisi (minimal 3 karakter, maksimal 300).', VOID_DEPENDENCY_EXISTS: 'Catatan ini sudah memiliki perubahan lanjutan. Batalkan perubahan terbaru lebih dulu.', VOID_INVARIANT_FAILED: 'Pembatalan tidak dapat dilakukan karena saldo atau data terkait sudah berubah.', VOID_TYPE_NOT_SUPPORTED: 'Jenis catatan ini belum dapat dibatalkan.', ASSET_INVALID: 'Pilih aset.', NOTE_TOO_LONG: 'Catatan maksimal 300 karakter.',
     DEBT_NOT_FOUND: 'Utang tidak ditemukan.', DEBT_ALREADY_PAID: 'Utang ini sudah lunas.', PAYMENT_EXCEEDS_DEBT_REMAINING: 'Pembayaran tidak boleh lebih besar dari sisa utang.',
     UNALLOCATED_INCOME_INSUFFICIENT: 'Jumlah melebihi pemasukan yang belum dialokasikan.', ASSET_NOT_FOUND: 'Aset tidak ditemukan.',
     ASSET_BALANCE_INSUFFICIENT: 'Nilai aset tidak cukup untuk penarikan ini.', TRANSFER_SAME_LOCATION: 'Lokasi asal dan tujuan harus berbeda.', KIND_UNSUPPORTED: 'Jenis catatan tidak didukung.'
@@ -19,6 +19,7 @@
       case 'TRANSFER': return fv3Transfer_(st, rid, d.from, d.to, d.amount);
       case 'DCA': return fv3Dca_(st, rid, d.from, d.assetId, d.amount);
       case 'WD': return fv3Withdraw_(st, rid, d.assetId, d.to, d.amount);
+      case 'VOID': return fv3VoidTransaction_(st, rid, d.targetRequestId, d.reason);
       default: return baseDispatch(st, rid, type, d);
     }
   }
@@ -39,6 +40,12 @@
   function makeData(spec, st, opening, now) {
     var f = spec.form || {}, c = spec.cats || { income: [], expense: [] }, date = function () { return D.validateDate(f.transactionDate, opening.snapshotDate, now); };
     switch (spec.kind) {
+      case 'VOID': {
+        var target = String(f.targetRequestId || ''), reason = String(f.reason || '').trim();
+        if (!target) throw new Error('VOID_TARGET_INVALID');
+        if (reason.length < 3 || reason.length > 300) throw new Error('VOID_REASON_REQUIRED');
+        return { type: 'VOID', data: { targetRequestId: target, reason: reason } };
+      }
       case 'INCOME': return D.buildIncome(f, opening, c.income, now);
       case 'EXPENSE': return D.buildExpense(f, opening, c.expense, now);
       case 'DEBT_PAYMENT': {
@@ -87,6 +94,7 @@
       case 'OPEN_ASSET': return { title: 'Aset dicatat · ' + d.name, amount: d.value, sign: '', detail: 'Nilai tercatat; tidak mengubah saldo' };
       case 'OPEN_DEBT': return { title: 'Utang dicatat · ' + d.name, amount: d.remaining, sign: '', detail: 'Sisa utang; bukan pengeluaran' };
       case 'REVALUE_ASSET': return { title: 'Nilai aset diperbarui · ' + nm(A, d.assetId, 'aset'), amount: d.value, sign: '', detail: 'Sebelumnya ' + m(r.before) + '; tidak mengubah saldo' };
+      case 'VOID': return { title: 'Pembatalan catatan', amount: 0, sign: '', detail: 'Membatalkan ' + String(r.targetType || 'transaksi') + ' · alasan: ' + String(r.reason || d.reason || '') };
       default: return { title: String(e.type), amount: 0, sign: '', detail: '' };
     }
   }
