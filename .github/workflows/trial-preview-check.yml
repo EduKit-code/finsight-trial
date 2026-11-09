@@ -25,5 +25,7 @@ jobs:
           node --check assets/store.js
           node --check assets/app.js
           node --check assets/tracker.js
+      - name: Run ledger regression tests
+        run: node test/ledger.test.js
       - name: Check patch whitespace
         run: git diff --check
