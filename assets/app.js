@@ -456,18 +456,21 @@
       title: 'Ada pemasukan yang belum ditempatkan',
       meaning: money(st.unallocatedIncome) + ' sudah tercatat sebagai pemasukan, tetapi belum masuk ke saldo Cash, Rekening, atau E-Wallet.',
       impact: 'Jumlah ini belum menambah Saldo Berjalan.',
+      choice: 'Jika ingin, kamu bisa menempatkannya lewat Catat. Tidak harus dilakukan sekarang.',
       basis: 'Sisa pemasukan belum ditempatkan: ' + money(st.unallocatedIncome) + '.'
     });
     if (sr.state === 'noincome') insights.push({
       title: 'Savings Rate belum dapat dihitung',
       meaning: 'Belum ada pemasukan bulan ini yang tercatat.',
       impact: 'FinSight tidak menampilkan 0% karena itu dapat memberi arti yang keliru.',
+      choice: 'Jika ada pemasukan bulan ini, kamu bisa mencatatnya. Jika memang tidak ada, biarkan metrik ini belum dihitung.',
       basis: 'Pemasukan ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '.'
     });
     else if (savingsLimited) insights.push({
       title: 'Data Savings Rate masih terbatas',
       meaning: 'Angka sementara hanya membandingkan catatan yang sudah dimasukkan, belum tentu mewakili seluruh aktivitas bulan ini.',
       impact: 'Nilainya bisa berubah ketika catatan dilengkapi.',
+      choice: 'Lengkapi catatan yang belum masuk bila memang ada.',
       basis: 'Pemasukan ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '; ' + relevantCount + ' catatan relevan; hari ke-' + dayOfMonth + '.'
     });
     if (debts.some(function (x) { return x.status === 'AKTIF' && x.mode === 'CICILAN' && x.installment > 0; })) {
@@ -476,6 +479,7 @@
         title: 'Saldo dan nominal cicilan bulanan',
         meaning: 'Saldo likuid saat ini ' + money(total) + '; nominal cicilan aktif per bulan ' + money(inst) + '.',
         impact: 'Ini perbandingan nominal, bukan proyeksi ketahanan saldo atau jaminan kemampuan membayar.',
+        choice: 'Gunakan hanya sebagai satu bahan pertimbangan bersama kebutuhan hidup dan pengeluaran lain.',
         basis: money(total) + ' ÷ ' + money(inst) + (inst ? ' = ' + (total / inst).toFixed(2).replace('.', ',') + ' kali.' : '.')
       });
     }
@@ -483,6 +487,7 @@
       title: 'Belum ada hal khusus yang perlu ditafsirkan',
       meaning: 'Angka utama mengikuti saldo dan transaksi yang sudah kamu catat.',
       impact: 'FinSight tidak membuat kesimpulan di luar data yang tersedia.',
+      choice: 'Tidak ada tindakan yang perlu dilakukan hanya karena bagian ini.',
       basis: 'Saldo likuid ' + money(total) + '; pemasukan bulan ini ' + money(month.income) + '; pengeluaran konsumsi ' + money(month.expense) + '.'
     });
     insights = insights.slice(0, 3);
@@ -493,6 +498,7 @@
           el('h3', { text: x.title }),
           el('p', {}, el('strong', { text: 'Arti. ' }), x.meaning),
           el('p', {}, el('strong', { text: 'Dampak. ' }), x.impact),
+          el('p', {}, el('strong', { text: 'Pilihan. ' }), x.choice),
           el('p', { class: 'hint' }, el('strong', { text: 'Dasar. ' }), x.basis));
       }),
       el('p', { class: 'hint', text: 'Penjelasan dibentuk dari aturan tetap dan angka yang tercatat, bukan keputusan otomatis atau prediksi.' }));
